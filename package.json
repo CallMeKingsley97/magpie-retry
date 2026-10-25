@@ -1,6 +1,6 @@
 {
   "name": "magpie-quota-manager",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "额度管家（Quota Manager）：把 magpie 里配好的 new-api / sub2api 中转站额度读进 Usage 卡片——额度窗口、余额、到期时间都用 magpie 自己的结构化字段",
   "type": "module",
   "main": "./index.mjs",
