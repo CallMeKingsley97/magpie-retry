@@ -13,7 +13,7 @@
 import path from "node:path"
 
 import { asRecord, requestJson, siteKeyOf, siteLabel, siteRootOf } from "./lib/core.mjs"
-import { PLUGIN_ID, patchAccountState, putAuthAccounts, dropAuthAccount, isPluginAccountShape, readJsonFile, loadProviderSites, registeredSites, authFilePath } from "./lib/store.mjs"
+import { PLUGIN_ID, patchAccountState, putAuthAccounts, dropAuthAccount, dropAccountState, patchState, loadState, isPluginAccountShape, readJsonFile, loadProviderSites, registeredSites, authFilePath } from "./lib/store.mjs"
 import { detectSite } from "./lib/detect.mjs"
 import { loginSub2Api } from "./lib/sub2api.mjs"
 import { usageFor } from "./lib/usage.mjs"
@@ -192,29 +192,51 @@ export default {
       const known = new Set(registeredSites(directory).map((s) => s.key))
       const sites = loadProviderSites(directory)
       const added = []
-      const batch = []
+
+      // 以前版本放过没展开的占位符（{{API_KEY_xxx}}），那种不是真凭据，顺手清掉
+      for (const { key, auth } of accountsIn()) {
+        if (!/^\{\{.*\}\}$/.test(String(auth?.key ?? ""))) continue
+        dropAuthAccount(directory, key)
+        dropAccountState(directory, key)
+        log("info", `清掉了一个占位符账号：${String(auth?.accountId ?? key)}`)
+      }
+
+      // 挑出要导的：没登记过、providers.json 那条带真 key（占位符不算凭据）
+      const candidates = []
       for (const s of sites) {
         if (known.has(s.key)) continue
         if (!s.hasKey) continue
-        // 凭据直接读 providers.json 里那条 provider 的 key（用户已经配好的）
-        const provider = findProviderRecord(s)
-        if (!provider?.key) continue
-        if (dryRun) {
-          added.push({ site: s.site, name: s.name, source: s.source, action: "会导入" })
-          continue
-        }
-        const detected = await detectSite(s.site).catch(() => undefined)
-        const kind = detected?.kind ?? "unknown"
-        batch.push({
-          key: accountKeyFor(),
-          site: s.site,
-          name: s.name,
-          kind,
-          credential: String(provider.key),
-          provider: s.providerIds[0] ?? "",
-        })
+        const cred = String(findProviderRecord(s)?.key ?? "").trim()
+        if (!cred || /^\{\{.*\}\}$/.test(cred)) continue
+        candidates.push({ site: s, cred })
         known.add(s.key)
       }
+      if (dryRun) {
+        return candidates.map(({ site }) => ({ site: site.site, name: site.name, source: site.source, action: "会导入" }))
+      }
+
+      // 站点类型要逐站探测（对每个站点发一次公开请求）。七十个站点串行下来
+      // 要好几分钟——面板“等了超级久”多半是它；开个小池子并发，几秒就完
+      const batch = []
+      let cursor = 0
+      const workers = Array.from({ length: Math.min(6, candidates.length) }, async () => {
+        for (;;) {
+          const i = cursor++
+          if (i >= candidates.length) return
+          const { site: s, cred } = candidates[i]
+          const detected = await detectSite(s.site).catch(() => undefined)
+          batch.push({
+            key: accountKeyFor(),
+            site: s.site,
+            name: s.name,
+            kind: detected?.kind ?? "unknown",
+            credential: cred,
+            provider: s.providerIds[0] ?? "",
+          })
+        }
+      })
+      await Promise.all(workers)
+
       if (batch.length && !saveAccounts(batch)) return added
       for (const e of batch) added.push({ site: e.site, name: e.name, account: e.key, kind: e.kind, action: "已导入" })
       return added
@@ -469,16 +491,21 @@ export default {
             ...(config.provider[PLUGIN_ID] ?? {}),
           }
 
-          // settings 面板请求了一次导入：跑一遍，把结果写回 options（面板读它）
+          // settings 面板请求了一次导入：跑一遍。请求时间要记进 state.json——
+          // options 里那个 importRequested 清不掉（面板和插件各写各的），
+          // 不记的话 magpie 每次重启都会当成新请求，把全部站点重新扫一遍
           const opts = entryOptions()
           const asked = Number(opts?.importRequested ?? 0)
           if (asked && asked !== lastImportRequestAt) {
             lastImportRequestAt = asked
-            importProviders({})
-              .then((added) => {
-                log("info", added.length ? `面板导入完成：${added.length} 个站点` : "面板导入：没有新的站点可导入")
-              })
-              .catch((e) => log("error", `面板导入失败：${e?.message ?? e}`))
+            if (asked !== Number(loadState(directory).importRequestedAt ?? 0)) {
+              patchState(directory, { importRequestedAt: asked })
+              importProviders({})
+                .then((added) => {
+                  log("info", added.length ? `面板导入完成：${added.length} 个站点` : "面板导入：没有新的站点可导入")
+                })
+                .catch((e) => log("error", `面板导入失败：${e?.message ?? e}`))
+            }
           }
 
           if (magpieOption(OPTION_KEYS.showProviderScan) && Date.now() - lastProviderScanAt > PROVIDER_SCAN_INTERVAL) {
