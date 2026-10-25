@@ -1,38 +1,50 @@
-// Settings → Plugins 标签里的面板：提供一键导入。
-// 面板跑在沙箱 iframe 里，不能联网、不能直接调插件——它把「导入」这个意愿
-// 写进插件自己的 options，插件进程（input 的第二个参数）看到后执行。
-// 插件没有往回写的通道，所以这里只能如实说「在后台进行」，不能假装有进度。
+// Settings → Plugins 标签里的配置面板：唯一的界面，只管把重试规则写进
+// 插件的 options。面板跑在沙箱 iframe 里，保存走 magpie.options.set，
+// magpie 写完 plugins.json 后网关在一秒内热加载，下一个请求就生效。
+// 插件没有往回写的通道，所以保存后只如实说「已保存」，不假装有状态可看。
 (async () => {
   await magpie.ready;
 
+  const els = {
+    enabled: document.getElementById("enabled"),
+    threshold: document.getElementById("threshold"),
+    base: document.getElementById("base"),
+    max: document.getElementById("max"),
+  };
   const result = document.getElementById("result");
-  const button = document.getElementById("import");
+  const button = document.getElementById("save");
 
-  let opts = await magpie.options.get();
-  let busy = false;
+  const DEFAULTS = { enabled: true, threshold: 3, baseSeconds: 20, maxSeconds: 120 };
+
+  let opts = { ...DEFAULTS };
+  try {
+    const saved = await magpie.options.get();
+    opts = { ...DEFAULTS, ...(typeof saved === "object" && saved ? saved : {}) };
+  } catch {}
 
   const paint = () => {
-    button.disabled = busy;
-    button.textContent = busy ? "导入中…" : "一键导入全部站点";
+    els.enabled.checked = opts.enabled !== false;
+    els.threshold.value = opts.threshold;
+    els.base.value = opts.baseSeconds;
+    els.max.value = opts.maxSeconds;
   };
   paint();
 
   button.onclick = async () => {
-    if (busy) return;
-    busy = true;
-    paint();
-    result.hidden = true;
+    button.disabled = true;
+    result.textContent = "";
     try {
-      opts = await magpie.options.set({ ...opts, importRequested: Date.now() });
-      result.hidden = false;
-      result.textContent =
-        "导入在后台进行，一般几十秒内完成（站点多会久一点）。这条提示不用等——" +
-        "完成后到 Settings → Usage 就能看到各站点的额度卡片。";
+      const next = {
+        enabled: els.enabled.checked,
+        threshold: Number(els.threshold.value),
+        baseSeconds: Number(els.base.value),
+        maxSeconds: Number(els.max.value),
+      };
+      opts = await magpie.options.set(next);
+      result.textContent = "已保存，下一个请求起生效。";
     } catch (e) {
-      result.hidden = false;
-      result.textContent = "没能发起导入：" + (e?.message ?? e);
+      result.textContent = "没能保存：" + (e?.message ?? e);
     }
-    busy = false;
-    paint();
+    button.disabled = false;
   };
 })();

@@ -1,49 +1,49 @@
 {
-  "name": "magpie-quota-manager",
-  "version": "0.1.1",
-  "description": "额度管家（Quota Manager）：把 magpie 里配好的 new-api / sub2api 中转站额度读进 Usage 卡片——额度窗口、余额、到期时间都用 magpie 自己的结构化字段",
+  "name": "magpie-retry",
+  "version": "0.1.0",
+  "description": "自动重试（网关熔断）：上游连不上时数着失败快速回 429，引导 agent 按自己的退避节奏重试，恢复后自动放行——对话不被网络抖动弄死",
   "type": "module",
-  "main": "./index.mjs",
   "files": [
-    "index.mjs",
+    "retry.middleware.js",
     "lib",
     "tests",
     "ui",
     "README.md",
-    "ROADMAP.md",
     "LICENSE"
   ],
   "keywords": [
-    "opencode",
-    "opencode-plugin",
     "magpie",
     "magpie-plugin",
-    "auth",
-    "provider",
-    "usage",
-    "quota",
-    "额度",
-    "new-api",
-    "sub2api"
+    "middleware",
+    "gateway",
+    "retry",
+    "circuit-breaker",
+    "重试",
+    "熔断"
   ],
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/CallMeKingsley97/magpie-quota-manager"
+    "url": "https://github.com/CallMeKingsley97/magpie-retry"
   },
   "scripts": {
     "test": "node --test \"tests/*.test.mjs\""
   },
   "magpie": {
-    "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMTZhMzRhIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTMuNSAxOGE4LjUgOC41IDAgMSAxIDE3IDAiLz48cGF0aCBkPSJtMTIgMTUgNC4yLTQuMiIvPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTUiIHI9IjEuMyIgZmlsbD0iIzE2YTM0YSIgc3Ryb2tlPSJub25lIi8+PHBhdGggZD0iTTQuNSAxNGgyTTE3LjUgMTRoMk02LjYgOC42bDEuNCAxLjRNMTcuNCA4LjYgMTYgMTAiLz48L3N2Zz4=",
-    "maxConcurrency": 1,
+    "middleware": "./retry.middleware.js",
     "panels": [
       {
         "slot": "settings",
-        "title": "额度管家",
+        "title": "自动重试",
         "file": "ui/panel.html"
       }
     ],
+    "options": {
+      "enabled": true,
+      "threshold": 3,
+      "baseSeconds": 20,
+      "maxSeconds": 120
+    },
     "permissions": []
   }
 }
