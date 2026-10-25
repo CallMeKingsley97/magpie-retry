@@ -4,17 +4,90 @@
 <meta charset="utf-8">
 <style>
   :root { color-scheme: light dark; }
+  * { box-sizing: border-box; }
   body {
     font: 13px/1.6 -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
     margin: 0; padding: 14px 16px;
+    color: canvastext;
   }
-  .muted { color: gray; }
+  .muted { opacity: .62; }
   .small { font-size: 12px; }
-  .rule { display: grid; grid-template-columns: max-content 1fr; gap: 8px 12px; align-items: center; margin: 10px 0; }
-  .rule label { color: gray; }
-  .rule input[type="number"] { width: 90px; }
-  .result { margin: 10px 0 0; font-weight: 500; }
-  hr { border: 0; border-top: 1px solid color-mix(in srgb, gray 30%, transparent); margin: 12px 0; }
+  p { margin: 0 0 10px; }
+
+  /* 每个字段一行：标签列 + 控件列，说明缩进对齐 */
+  .field {
+    display: grid;
+    grid-template-columns: 9.5em 1fr;
+    gap: 2px 12px;
+    align-items: baseline;
+    padding: 7px 0;
+  }
+  .field > label { opacity: .62; cursor: default; }
+  .field .desc { grid-column: 2; font-size: 12px; opacity: .62; }
+  .field .err  { grid-column: 2; font-size: 12px; color: #d5453c; display: none; }
+  .field.bad .err { display: block; }
+  .field.bad input[type="number"] { border-color: #d5453c; }
+
+  input[type="number"] {
+    font: inherit; width: 5.5em; padding: 3px 6px;
+    border: 1px solid color-mix(in srgb, canvastext 25%, transparent);
+    border-radius: 6px; background: canvas; color: canvastext;
+  }
+  input[type="number"]:focus-visible {
+    outline: 2px solid #3b82f6; outline-offset: 1px; border-color: transparent;
+  }
+  .unit { opacity: .62; margin-left: 4px; }
+
+  /* 启用开关：仍是 checkbox，画成 switch，无障碍语义不变 */
+  .switch { position: relative; width: 34px; height: 20px; flex: none; }
+  .switch input {
+    position: absolute; inset: 0; margin: 0; opacity: 0; cursor: pointer;
+  }
+  .switch .knob {
+    position: absolute; inset: 0; border-radius: 999px;
+    background: color-mix(in srgb, canvastext 22%, transparent);
+    transition: background .2s;
+    pointer-events: none;
+  }
+  .switch .knob::after {
+    content: ""; position: absolute; top: 2px; left: 2px;
+    width: 16px; height: 16px; border-radius: 50%; background: canvas;
+    box-shadow: 0 1px 2px rgb(0 0 0 / .25);
+    transition: translate .2s;
+  }
+  .switch input:checked + .knob { background: #3b82f6; }
+  .switch input:checked + .knob::after { translate: 14px 0; }
+  .switch input:focus-visible + .knob { outline: 2px solid #3b82f6; outline-offset: 2px; }
+  .onrow { display: flex; gap: 10px; align-items: center; }
+  .onrow .hint { font-size: 12px; opacity: .62; }
+
+  /* 实时规则预览 */
+  .preview {
+    margin: 10px 0; padding: 8px 12px; border-radius: 8px;
+    background: color-mix(in srgb, canvastext 6%, transparent);
+    font-size: 12.5px;
+  }
+  .preview .off { color: #d5453c; }
+
+  .actions { display: flex; gap: 8px; align-items: center; margin-top: 12px; }
+  button {
+    font: inherit; padding: 5px 14px; border-radius: 7px; cursor: pointer;
+    border: 1px solid color-mix(in srgb, canvastext 25%, transparent);
+    background: canvas; color: canvastext;
+    transition: background .2s, opacity .2s;
+  }
+  button:hover { background: color-mix(in srgb, canvastext 8%, canvas); }
+  button:focus-visible { outline: 2px solid #3b82f6; outline-offset: 2px; }
+  button.primary {
+    background: #3b82f6; border-color: #3b82f6; color: #fff;
+  }
+  button.primary:hover { background: #2f74ec; }
+  button:disabled { opacity: .5; cursor: default; }
+  #result { font-size: 12.5px; }
+  #result.ok { opacity: .8; }
+  #result.bad { color: #d5453c; }
+
+  hr { border: 0; border-top: 1px solid color-mix(in srgb, canvastext 15%, transparent); margin: 14px 0 10px; }
 </style>
 <script src="_magpie/bridge.js"></script>
 <script src="panel.js" defer></script>
@@ -22,35 +95,49 @@
 <body>
 <p class="muted small">
   上游站点连不上时（网络抖动、站点抽风），插件数着连续失败次数「熔断」：
-  期间你的请求不再发给上游干等，而是立刻回 429，让 Claude Code 这类 agent
-  按它自带的退避策略自动重试；熔断窗口过后放行一个请求去试探，一通就恢复
-  放行、后续重试自动停止。整个过程不需要你盯着终端。
+  期间请求不再发给上游干等，而是立刻回 429，让 Claude Code 这类 agent 按
+  它自带的退避策略自动重试；熔断窗口过后放行一个请求去试探，一通就恢复、
+  后续重试自动停止。整个过程不需要你盯着终端。
 </p>
 
-<div class="rule">
+<div class="field">
   <label for="enabled">启用</label>
-  <span><input type="checkbox" id="enabled"> 关掉后插件完全不介入（fail-open）</span>
-</div>
-<div class="rule">
-  <label for="threshold">连续失败几次后熔断</label>
-  <span><input type="number" id="threshold" min="1" max="10" step="1"> 次</span>
-</div>
-<div class="rule">
-  <label for="base">第一段熔断窗口</label>
-  <span><input type="number" id="base" min="5" max="300" step="5"> 秒（之后每再失败一次翻倍）</span>
-</div>
-<div class="rule">
-  <label for="max">窗口上限</label>
-  <span><input type="number" id="max" min="30" max="1800" step="30"> 秒</span>
+  <span class="onrow">
+    <span class="switch"><input type="checkbox" id="enabled"><span class="knob"></span></span>
+    <span class="hint">关掉后插件完全不介入（fail-open）</span>
+  </span>
 </div>
 
-<p><button type="button" id="save">保存</button> <span id="result" class="result" role="status" aria-live="polite"></span></p>
+<div class="field" id="f-threshold">
+  <label for="threshold">连续失败几次后熔断</label>
+  <span><input type="number" id="threshold" min="1" max="10" step="1" inputmode="numeric"><span class="unit">次</span></span>
+  <span class="desc">少则熔断得早，多则给上游更多机会自愈（1–10）</span>
+  <span class="err">要填 1 到 10 之间的整数</span>
+</div>
+
+<div class="field" id="f-base">
+  <label for="base">第一段熔断窗口</label>
+  <span><input type="number" id="base" min="5" max="300" step="5" inputmode="numeric"><span class="unit">秒</span></span>
+  <span class="desc">这期间请求一律秒回 429；之后每再失败一次窗口翻倍（5–300）</span>
+  <span class="err">要填 5 到 300 之间的数（5 的倍数最整齐）</span>
+</div>
+
+<div class="field" id="f-max">
+  <label for="max">窗口上限</label>
+  <span><input type="number" id="max" min="30" max="1800" step="30" inputmode="numeric"><span class="unit">秒</span></span>
+  <span class="desc">翻倍到这一档就不再涨；agent 对 429 的耐心有限，别设太长（30–1800）</span>
+  <span class="err">要填 30 到 1800 之间的数</span>
+</div>
+
+<p class="preview" id="preview" aria-live="polite"></p>
+
+<div class="actions">
+  <button type="button" class="primary" id="save">保存</button>
+  <button type="button" id="reset">恢复默认</button>
+  <span id="result" role="status" aria-live="polite"></span>
+</div>
 
 <hr>
-<p class="muted small">
-  判定只看「连不连得上」：上游回了话——哪怕是 401、429——都算网络正常，
-  熔断立刻解除。网关给 agent 报的连接失败（502/504）和上游自己的 5xx 计失败。
-</p>
 <p class="muted small" id="boundary">
   边界：如果 agent 自己的重试也耗尽了、终端已经报错停下，那一轮对话任何插件
   都救不回来，需要你手动重发。这个插件做的是让 agent 的耐心撑过更长的抖动。

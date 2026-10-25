@@ -1,6 +1,6 @@
 {
   "name": "magpie-retry",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "自动重试（网关熔断）：上游连不上时数着失败快速回 429，引导 agent 按自己的退避节奏重试，恢复后自动放行——对话不被网络抖动弄死",
   "type": "module",
   "files": [
