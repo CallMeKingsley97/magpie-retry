@@ -1,6 +1,6 @@
 {
   "name": "magpie-retry",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "自动重试（网关熔断）：上游连不上时数着失败快速回 429，引导 agent 按自己的退避节奏重试，恢复后自动放行——对话不被网络抖动弄死",
   "type": "module",
   "files": [
@@ -30,6 +30,7 @@
     "test": "node --test \"tests/*.test.mjs\""
   },
   "magpie": {
+    "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjM0I4MkY2IiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTMgMTJhOSA5IDAgMSAwIDktOWMtMi41MiAwLTQuOTMgMS02Ljc0IDIuNzRMMyA4Ii8+PHBhdGggZD0iTTMgM3Y1aDUiLz48L3N2Zz4K",
     "middleware": "./retry.middleware.js",
     "panels": [
       {
