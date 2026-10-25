@@ -8,6 +8,7 @@
     "index.mjs",
     "lib",
     "tests",
+    "ui",
     "README.md",
     "ROADMAP.md",
     "LICENSE"
@@ -35,6 +36,14 @@
   },
   "magpie": {
     "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSIjMTZhMzRhIiBzdHJva2Utd2lkdGg9IjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI+PHBhdGggZD0iTTMuNSAxOGE4LjUgOC41IDAgMSAxIDE3IDAiLz48cGF0aCBkPSJtMTIgMTUgNC4yLTQuMiIvPjxjaXJjbGUgY3g9IjEyIiBjeT0iMTUiIHI9IjEuMyIgZmlsbD0iIzE2YTM0YSIgc3Ryb2tlPSJub25lIi8+PHBhdGggZD0iTTQuNSAxNGgyTTE3LjUgMTRoMk02LjYgOC42bDEuNCAxLjRNMTcuNCA4LjYgMTYgMTAiLz48L3N2Zz4=",
-    "maxConcurrency": 1
+    "maxConcurrency": 1,
+    "panels": [
+      {
+        "slot": "settings",
+        "title": "额度管家",
+        "file": "ui/panel.html"
+      }
+    ],
+    "permissions": []
   }
 }

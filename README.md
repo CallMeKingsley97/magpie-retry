@@ -36,7 +36,7 @@ magpie plugin rm magpie-api-auto-checkin
 magpie plugin add github:CallMeKingsley97/magpie-quota-manager
 ```
 
-然后在 Providers → 额度管家 里加账号，或让 agent 跑
+然后在 Settings → Plugins 的「额度管家」面板里点一键导入，或让 agent 跑
 `magpie-quota-manager_manage_usage` 的 `action=import`——它会把 providers.json
 里所有带 key 的站点重新导入一遍（站点名、类型都会重新认，不丢信息）。
 
@@ -45,25 +45,32 @@ magpie plugin add github:CallMeKingsley97/magpie-quota-manager
 
 ## 用
 
-### 1. 一键导入（推荐先做）
+### 1. 一键导入（推荐）
 
-providers.json 里已经配好的站点，凭据（那条 provider 的 key）直接拿来用：
+Settings → Plugins 标签里的「额度管家」面板有一个**一键导入**按钮：把
+providers.json / plugin-providers.json 里已经配好、带 key 的站点一次导入，
+凭据就是那条 provider 的 key。导入时会顺手认站点类型（看公开接口，不需要
+密钥）；认不出来的也导进来，读卡片时再认一次。
 
-> 对 agent 说：“把没导入的站点导入额度管家”，或者让它调
-> `magpie-quota-manager_manage_usage`，`action=import`。
+也可以对 agent 说「把没导入的站点导入额度管家」，或让它调
+`magpie-quota-manager_manage_usage`，`action=import`。
 
-导入时会顺手认站点类型（看公开接口，不需要密钥）：能认出来的记下是 new-api
-还是 sub2api，认不出来的也会导进来，读卡片时再认一次。
+在 Providers → 额度管家 的账号列表里点「导入站点」，效果相同。
 
 ### 2. 手动加站点
 
-Providers → 额度管家 → 「登录」里有三种方式：
+想加 providers.json 之外的站点（或某个站点没带 key）时，对 agent 说：
 
-| 方式 | 什么时候用 |
+> 用额度管家的 manage_usage 工具，action=add，站点 https://example.com，
+> 令牌 sk-…
+
+凭据分三种，按站点类型给：
+
+| 凭据 | 什么时候用 |
 | --- | --- |
 | **new-api 令牌（sk-…）** | new-api 及同族站点。去站点的「令牌」/「设置 → 访问令牌」建一个 |
-| **sub2api 邮箱密码** | sub2api 站点。插件登录后把邮箱密码留在账号里，令牌过期时自动续 |
-| **sub2api 登录令牌** | 不想存密码时：从浏览器里复制登录后的 access token |
+| **sub2api API 密钥（sk-…）** | sub2api 站点里建的 API 密钥 |
+| **sub2api 登录令牌** | 从浏览器里复制登录后的 access token（sub2api 邮箱密码登录可由 agent 代做，插件会自动续期） |
 
 添加时会用这把凭据真读一次额度，读得出来才收下——不会把一个填错的令牌
 存进去，等到看卡片时才发现。
@@ -97,11 +104,17 @@ Settings → Usage → Alerts 里设的阈值；这里提供的余额都是 magp
 
 ## 边界与隐私
 
+- **没有登录，没有信息泄露。** 插件不要求你输入密码，不做任何形式的账号登录；
+  凭据只来自 magpie 自己的 `providers.json`（那是你已经配好的），或者你明确
+  让 agent 添加的那一条。
 - 只读 magpie 自己的配置文件（`providers.json`、`plugin-providers.json`、
   自己的 `plugin-auth.json`），请求**只发往你自己配置的那些站点**。
+- 不上传、不转发、不收集任何数据：没有遥测，没有第三方接口，界面上也写明了
+  这一点（Settings → Plugins → 额度管家）。
 - 日志和提示里不写密钥，不写完整响应体。
-- sub2api 的邮箱密码存在 magpie 的 `plugin-auth.json`（0600）里，只用于令牌
-  过期时自动续期；不想存密码就用「登录令牌」方式。
+- sub2api 的邮箱密码只有 agent 代你添加时才会出现在账号里（存 magpie 的
+  `plugin-auth.json`，0600），只用于令牌过期时自动续期；不想存密码就用
+  登录令牌方式。
 - 读不出来的结论一律如实说：没认出来、令牌被拒、连不上、被限流，各有各的说法，
   不会把「读不到」显示成余额 0。
 
@@ -131,6 +144,8 @@ npm test        # node --test "tests/*.test.mjs"
 - `lib/sub2api.mjs` — sub2api 的登录、续期、额度
 - `lib/store.mjs` — 站点清单、账号登记
 - `lib/usage.mjs` — 把上面两家的读数拼成 magpie 的 Usage 卡片
+- `ui/panel.html` + `ui/panel.js` — Settings → Plugins 里的面板：一键导入
+  按钮和隐私说明
 
 ## 后续
 

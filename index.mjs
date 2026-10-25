@@ -12,8 +12,8 @@
 
 import path from "node:path"
 
-import { asRecord, httpSummary, requestJson, siteKeyOf, siteLabel, siteRootOf } from "./lib/core.mjs"
-import { PLUGIN_ID, patchAccountState, putAuthAccount, dropAuthAccount, isPluginAccountShape, readJsonFile, loadProviderSites, registeredSites, authFilePath } from "./lib/store.mjs"
+import { asRecord, requestJson, siteKeyOf, siteLabel, siteRootOf } from "./lib/core.mjs"
+import { PLUGIN_ID, patchAccountState, putAuthAccounts, dropAuthAccount, isPluginAccountShape, readJsonFile, loadProviderSites, registeredSites, authFilePath } from "./lib/store.mjs"
 import { detectSite } from "./lib/detect.mjs"
 import { loginSub2Api } from "./lib/sub2api.mjs"
 import { usageFor } from "./lib/usage.mjs"
@@ -22,7 +22,12 @@ const PROVIDER_ID = PLUGIN_ID
 const PROVIDER_NAME = "额度管家"
 
 // 声明过的开关（auth.options）；用户的值在 settings.json 的 pluginOptions 里
-const OPTION_KEYS = { showProviderScan: "show_provider_scan" }
+const OPTION_KEYS = { showProviderScan: "showProviderScan" }
+
+// settings 面板（ui/panel.html）通过 magpie.options.set 请求导入；插件进程
+// 收到的第二个参数就是这些 options。上次请求的时间戳记住，处理过就清掉，
+// 避免每次 config 钩子都重复导入。
+let lastImportRequestAt = 0
 
 // config 钩子在 magpie 每次拼请求配置时都会被叫到；扫一眼 providers.json
 // 虽然只是读本地文件，也没必要每秒读好几遍。十分钟看一次足够了。
@@ -31,7 +36,7 @@ let lastProviderScanAt = 0
 
 export default {
   id: PLUGIN_ID,
-  async server(input) {
+  async server(input, panelOptions = {}) {
     const client = input?.client
     const directory = input?.directory
     const magpieOption = (key) => {
@@ -41,6 +46,9 @@ export default {
         return false
       }
     }
+    // settings 面板写进 plugins.json Entry.Options 的值，host 把它作为
+    // server() 的第二个参数传进来（面板通过 magpie.options.set 更新它）
+    const entryOptions = () => (typeof panelOptions === "object" && panelOptions ? panelOptions : {})
 
     const log = async (level, message) => {
       try {
@@ -113,11 +121,11 @@ export default {
     }
 
     /**
-     * 把一个账号写进 plugin-auth.json。不在登录流程里时（导入/添加站点），
+     * 把一个账号写进 plugin-auth.json。不在登录流程里时（添加站点），
      * 不能走 client.auth.set（会写到 provider 自己那一个 key 上）。
      */
     function saveAccountFile(key, body) {
-      const ok = putAuthAccount(directory, key, body)
+      const ok = putAuthAccounts(directory, new Map([[key, body]]))
       if (!ok) log("error", "写 plugin-auth.json 失败（文件可能正被占用或读不出来），这次没有保存")
       return ok
     }
@@ -159,39 +167,56 @@ export default {
     }
 
     // ---- 账号登记簿 --------------------------------------------------------
+    /** 一次导入多个站点：批量写 auth 文件（读一次写一次），批量记 state。 */
+    function saveAccounts(entries) {
+      const pairs = new Map()
+      const notes = []
+      for (const e of entries) {
+        pairs.set(e.key, {
+          type: "api",
+          key: e.credential,
+          accountId: e.name,
+          metadata: { site: e.site, name: e.name, source: e.source ?? "providers.json", kind: e.kind, provider: e.provider ?? "" },
+        })
+        notes.push([e.key, { site: e.site, name: e.name, kind: e.kind, source: e.source ?? "providers.json" }])
+      }
+      if (!putAuthAccounts(directory, pairs)) {
+        log("error", "写 plugin-auth.json 失败（文件可能正被占用或读不出来），这次没有保存")
+        return false
+      }
+      for (const [key, meta] of notes) patchAccountState(directory, key, meta)
+      return true
+    }
+
     async function importProviders({ dryRun = false } = {}) {
       const known = new Set(registeredSites(directory).map((s) => s.key))
       const sites = loadProviderSites(directory)
       const added = []
+      const batch = []
       for (const s of sites) {
         if (known.has(s.key)) continue
         if (!s.hasKey) continue
+        // 凭据直接读 providers.json 里那条 provider 的 key（用户已经配好的）
+        const provider = findProviderRecord(s)
+        if (!provider?.key) continue
         if (dryRun) {
           added.push({ site: s.site, name: s.name, source: s.source, action: "会导入" })
           continue
         }
-        // 凭据直接读 providers.json 里那条 provider 的 key（用户已经配好的）
-        const provider = findProviderRecord(s)
-        if (!provider?.key) continue
         const detected = await detectSite(s.site).catch(() => undefined)
         const kind = detected?.kind ?? "unknown"
-        const accountKey = accountKeyFor()
-        const body = {
-          type: "api",
-          key: String(provider.key),
-          accountId: s.name,
-          metadata: { site: s.site, name: s.name, source: "providers.json", kind, provider: s.providerIds[0] ?? "" },
-        }
-        if (!saveAccountFile(accountKey, body)) continue
-        patchAccountState(directory, accountKey, {
+        batch.push({
+          key: accountKeyFor(),
           site: s.site,
           name: s.name,
           kind,
-          source: "providers.json",
+          credential: String(provider.key),
+          provider: s.providerIds[0] ?? "",
         })
-        added.push({ site: s.site, name: s.name, account: accountKey, kind, action: "已导入" })
         known.add(s.key)
       }
+      if (batch.length && !saveAccounts(batch)) return added
+      for (const e of batch) added.push({ site: e.site, name: e.name, account: e.key, kind: e.kind, action: "已导入" })
       return added
     }
 
@@ -444,6 +469,18 @@ export default {
             ...(config.provider[PLUGIN_ID] ?? {}),
           }
 
+          // settings 面板请求了一次导入：跑一遍，把结果写回 options（面板读它）
+          const opts = entryOptions()
+          const asked = Number(opts?.importRequested ?? 0)
+          if (asked && asked !== lastImportRequestAt) {
+            lastImportRequestAt = asked
+            importProviders({})
+              .then((added) => {
+                log("info", added.length ? `面板导入完成：${added.length} 个站点` : "面板导入：没有新的站点可导入")
+              })
+              .catch((e) => log("error", `面板导入失败：${e?.message ?? e}`))
+          }
+
           if (magpieOption(OPTION_KEYS.showProviderScan) && Date.now() - lastProviderScanAt > PROVIDER_SCAN_INTERVAL) {
             lastProviderScanAt = Date.now()
             const sites = loadProviderSites(directory)
@@ -480,127 +517,33 @@ export default {
         methods: [
           {
             type: "api",
-            label: "new-api 令牌（sk-…）",
-            prompts: [
-              {
-                type: "text",
-                key: "site",
-                message: "站点地址",
-                placeholder: "https://example.com",
-                validate: (v) => (siteRootOf(v) ? undefined : "请填完整网址，例如 https://example.com"),
-              },
-              {
-                type: "password",
-                key: "token",
-                message: "令牌（站点 → 令牌 / 设置 → 访问令牌，sk-… 开头）",
-                placeholder: "粘贴站点里建的令牌",
-              },
-              { type: "text", key: "name", message: "备注名（留空用域名）", placeholder: "可选" },
-            ],
-            async authorize(inputs = {}) {
-              const site = siteRootOf(inputs.site)
-              if (!site) return { type: "failed", error: "站点地址看不懂，请填完整网址" }
-              const token = String(inputs.token ?? "").trim()
-              if (!token) return { type: "failed", error: "没有填令牌" }
-              // 用这把令牌读一次自己的额度：能读出来，就说明它可用。
-              // 公开接口认不出站点类型也不打紧，凭据能读通就算数。
-              const detected = await detectSite(site)
-              const { kind: kindOf, probe } = await probeCredential(site, token, detected?.kind)
-              if (probe.error) return { type: "failed", error: `${siteLabel(site)} 连不上：${probe.error}` }
-              if (probe.rejected) {
+            // keyless：magpie 不问任何密钥，直接跑下面的 authorize —— 它把
+            // providers.json 里还没进来的站点一键导入。界面上不再是“登录”，
+            // 而是一次“导入”：不填表单、不输密码。
+            keyless: true,
+            label: "导入站点",
+            async authorize() {
+              const added = await importProviders({})
+              if (!added.length) {
+                const sites = loadProviderSites(directory)
+                const withKey = sites.filter((s) => s.hasKey).length
                 return {
                   type: "failed",
                   error:
-                    `${siteLabel(site)} 不认这个凭据（HTTP ${probe.status}${probe.body ? ` · ${httpSummary(probe).split("：")[1] ?? ""}` : ""}）。` +
-                    probe.hint,
+                    registeredSites(directory).length && withKey
+                      ? "都导入过了。新配置了站点后再点一次即可。"
+                      : "providers.json 里还没有带 key 的中转站。先在 magpie 里把站点配好，再回来点「导入」。",
                 }
               }
-              if (probe.unrecognized) {
-                return { type: "failed", error: `${siteLabel(site)} 没有可用的额度接口（HTTP ${probe.status}）` }
-              }
-              const name = String(inputs.name ?? "").trim() || accountLabelFromProbe(probe, site)
+              // 成功也要在 magpie 里留下一个“账号”，否则卡片行仍然显示“未登录”、
+              // 按钮还是“Sign in”。这个影子账号不读额度：usageCard 对 kind:imported
+              // 的账号只报一句导入结果。sign-in 带来的 key/accountId 由 host 写文件，
+              // 这里的返回只提供内容。
               return {
                 type: "success",
-                key: token,
-                accountId: name,
-                metadata: { site, name, kind: kindOf, source: "manual" },
-              }
-            },
-          },
-          {
-            type: "api",
-            label: "sub2api 邮箱密码",
-            prompts: [
-              {
-                type: "text",
-                key: "site",
-                message: "站点地址",
-                placeholder: "https://example.com",
-                validate: (v) => (siteRootOf(v) ? undefined : "请填完整网址，例如 https://example.com"),
-              },
-              { type: "text", key: "email", message: "登录邮箱", placeholder: "you@example.com" },
-              { type: "password", key: "password", message: "登录密码" },
-              { type: "text", key: "name", message: "备注名（留空用邮箱）", placeholder: "可选" },
-            ],
-            async authorize(inputs = {}) {
-              const site = siteRootOf(inputs.site)
-              if (!site) return { type: "failed", error: "站点地址看不懂，请填完整网址" }
-              try {
-                const tokens = await loginSub2Api(site, { email: inputs.email, password: inputs.password })
-                const name = String(inputs.name ?? "").trim() || tokens.accountId || siteLabel(site)
-                return {
-                  type: "success",
-                  key: tokens.access,
-                  accountId: name,
-                  metadata: {
-                    site,
-                    name,
-                    kind: "sub2api",
-                    source: "login",
-                    // 邮箱密码留着：令牌过期时能自动重新登录
-                    email: String(inputs.email ?? "").trim(),
-                    password: String(inputs.password ?? ""),
-                    ...(tokens.uid ? { uid: tokens.uid } : {}),
-                    ...(tokens.refresh ? { refresh: tokens.refresh } : {}),
-                    ...(tokens.expires ? { expires: tokens.expires } : {}),
-                  },
-                }
-              } catch (e) {
-                return { type: "failed", error: e?.message ?? String(e) }
-              }
-            },
-          },
-          {
-            type: "api",
-            label: "sub2api 登录令牌",
-            prompts: [
-              {
-                type: "text",
-                key: "site",
-                message: "站点地址",
-                placeholder: "https://example.com",
-                validate: (v) => (siteRootOf(v) ? undefined : "请填完整网址，例如 https://example.com"),
-              },
-              { type: "password", key: "token", message: "登录令牌 access token（浏览器开发者工具里复制）" },
-              { type: "text", key: "name", message: "备注名（留空用域名）", placeholder: "可选" },
-            ],
-            async authorize(inputs = {}) {
-              const site = siteRootOf(inputs.site)
-              const token = String(inputs.token ?? "").trim()
-              if (!site) return { type: "failed", error: "站点地址看不懂，请填完整网址" }
-              if (!token) return { type: "failed", error: "没有填令牌" }
-              const detected = await detectSite(site)
-              const probe = await probeToken(site, "sub2api", token)
-              if (probe.error) return { type: "failed", error: `${siteLabel(site)} 连不上：${probe.error}` }
-              if (probe.rejected) {
-                return { type: "failed", error: `${siteLabel(site)} 不认这个凭据（HTTP ${probe.status}）。${probe.hint}` }
-              }
-              const name = String(inputs.name ?? "").trim() || accountLabelFromProbe(probe, site)
-              return {
-                type: "success",
-                key: token,
-                accountId: name,
-                metadata: { site, name, kind: detected?.kind ?? "sub2api", source: "token" },
+                key: `imported-${added.length}-${Date.now().toString(36)}`,
+                accountId: `已导入 ${added.length} 个站点`,
+                metadata: { site: "https://imported.localhost", name: "导入", kind: "imported", source: "import" },
               }
             },
           },
